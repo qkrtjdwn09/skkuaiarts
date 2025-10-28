@@ -1,0 +1,60 @@
+import random, math
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+
+def blob(center=(0.5, 0.5), r=0.3, points=200, wobble=0.15):
+    angles = np.linspace(0, 2*math.pi, points)
+    radii = r * (1 + wobble*(np.random.rand(points)-0.5))
+    x = center[0] + radii * np.cos(angles)
+    y = center[1] + radii * np.sin(angles)
+    return x, y
+
+def vivid_palette(k=5):
+    colors = []
+    for _ in range(k):
+        h = random.random()
+        s = random.uniform(0.8, 1.0)
+        v = random.uniform(0.8, 1.0)
+        colors.append(tuple(mcolors.hsv_to_rgb((h,s,v))))
+    return colors
+
+def generate_poster(style="Vivid", seed=None, save=False):
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
+
+    plt.figure(figsize=(7,10))
+    plt.axis('off')
+    plt.gca().set_facecolor((0.98,0.98,0.97))
+
+    # Example preset: vivid
+    n_layers = 8
+    wobble_range = (0.05, 0.2)
+    palette = vivid_palette(6)
+
+    for i in range(n_layers):
+        cx, cy = random.random(), random.random()
+        rr = random.uniform(0.15, 0.45)
+        x, y = blob(center=(cx, cy), r=rr,
+                    wobble=random.uniform(*wobble_range))
+        color = random.choice(palette)
+        alpha = random.uniform(0.25, 0.6)
+        plt.fill(x, y, color=color, alpha=alpha, edgecolor=(0,0,0,0))
+
+    plt.text(0.05, 0.95, "Generative Poster", fontsize=18, weight='bold',
+             transform=plt.gca().transAxes)
+    plt.text(0.05, 0.91, f"Style: {style}, Seed={seed}", fontsize=11,
+             transform=plt.gca().transAxes)
+
+    plt.xlim(0,1); plt.ylim(0,1)
+
+    if save:
+        plt.savefig(f"poster_{style.lower()}_seed{seed}.png", dpi=150, bbox_inches="tight")
+    plt.show()
+
+# -------- Demo: Same seed twice + different seeds --------
+generate_poster(seed=42, save=True)   # First with seed 42
+generate_poster(seed=42, save=True)   # Same again → identical
+generate_poster(seed=7, save=True)    # Different seed
+generate_poster(seed=123, save=True)  # Another different seed
