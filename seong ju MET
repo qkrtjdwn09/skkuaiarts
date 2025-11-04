@@ -1,0 +1,194 @@
+# streamlit_app.py
+import streamlit as st
+import requests
+from PIL import Image
+import io
+import base64
+from typing import List, Dict
+
+MET_SEARCH_URL = "https://collectionapi.metmuseum.org/public/collection/v1/search"
+MET_OBJECT_URL = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{}"
+
+st.set_page_config(page_title="Explore Artworks with MET Museum API", layout="wide")
+
+# --- custom CSS to approximate the screenshot (dark theme, rounded inputs, large heading) ---
+st.markdown(
+    """
+    <style>
+    :root {
+        --bg: #0f1113;
+        --panel: #111315;
+        --muted: #9aa3ad;
+        --accent: #e85a5a;
+        --card: #111417;
+    }
+    .stApp {
+        background: var(--bg);
+        color: #e6eef6;
+    }
+    .css-18ni7ap.e8zbici2 { /* streamlit main block background */
+        background: transparent;
+    }
+    .stButton>button {
+        border-radius: 10px;
+    }
+    .title {
+        font-size: 44px;
+        font-weight: 800;
+        margin-bottom: 0.2rem;
+    }
+    .subtitle {
+        color: var(--muted);
+        margin-top: -8px;
+        margin-bottom: 18px;
+    }
+    .searchbox .stTextInput>div>div>input {
+        border-radius: 8px !important;
+        padding: 14px !important;
+        background: #1c2023 !important;
+        color: #fff !important;
+        border: 1.5px solid #5a2b2b !important;
+    }
+    .card {
+        background: #0f1315;
+        padding: 18px;
+        border-radius: 10px;
+        margin-bottom: 18px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .no-image {
+        background: rgba(30,64,96,0.9);
+        color: #cfe9ff;
+        padding: 16px;
+        border-radius: 8px;
+        width: 100%;
+        display: inline-block;
+    }
+    .meta {
+        color: #cbd5df;
+        margin-top: 8px;
+    }
+    img.art {
+        border-radius: 8px;
+        max-width: 100%;
+        height: auto;
+        display: block;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# header / title area
+st.markdown('<div style="display:flex;align-items:center;gap:14px"><div style="font-size:34px">🎨</div><div><div class="title">Explore Artworks with MET Museum API</div></div></div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">Search the MET collection and preview images & metadata.</div>', unsafe_allow_html=True)
+
+# Search controls
+with st.container():
+    col1, col2 = st.columns([3,1])
+    with col1:
+        query = st.text_input("Search for Artworks:", value="", key="query_input")
+    with col2:
+        max_results = st.selectbox("Results", [5, 10, 20, 40], index=1)
+
+# helper functions
+@st.cache_data(show_spinner=False)
+def met_search(q: str, is_highlight: bool = False) -> List[int]:
+    """Return list of objectIDs for the query"""
+    if not q:
+        return []
+    params = {"q": q, "hasImages": "false"}  # we'll filter later for images optionally
+    r = requests.get(MET_SEARCH_URL, params=params, timeout=15)
+    r.raise_for_status()
+    js = r.json()
+    # js looks like: {"total": X, "objectIDs": [..]} or {"total":0}
+    return js.get("objectIDs") or []
+
+@st.cache_data(show_spinner=False)
+def met_get_object(object_id: int) -> Dict:
+    """Return metadata for a single object id"""
+    r = requests.get(MET_OBJECT_URL.format(object_id), timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+def image_from_url_or_b64(url: str):
+    """Return PIL image or None"""
+    try:
+        r = requests.get(url, timeout=12)
+        r.raise_for_status()
+        return Image.open(io.BytesIO(r.content)).convert("RGB")
+    except Exception:
+        return None
+
+# button to start search (allow Enter or button)
+do_search = st.button("Search") or (st.session_state.get("last_query") != query and query != "" and query != None)
+if do_search:
+    st.session_state.last_query = query
+
+if not query:
+    st.info("Type a search term above (e.g. \"mona lisa\", \"van gogh\", \"landscape\") and click Search.")
+    st.stop()
+
+# run search
+with st.spinner("Querying MET collection..."):
+    ids = met_search(query)
+    # if no results
+    if not ids:
+        st.warning("No results found.")
+        st.stop()
+    # limit results
+    ids = ids[:max_results]
+
+# show results list
+for obj_id in ids:
+    try:
+        meta = met_get_object(obj_id)
+    except Exception as e:
+        st.error(f"Failed to fetch object {obj_id}: {e}")
+        continue
+
+    title = meta.get("title") or "Untitled"
+    artist = meta.get("artistDisplayName") or "Unknown"
+    date = meta.get("objectDate") or meta.get("objectBeginDate") or ""
+    primary_image = meta.get("primaryImage") or ""
+    primary_image_small = meta.get("primaryImageSmall") or ""
+
+    with st.container():
+        st.markdown(f'<div class="card"><h2 style="margin:0 0 8px 0">{title}</h2>', unsafe_allow_html=True)
+        colA, colB = st.columns([1,2])
+        with colA:
+            # show image if available, otherwise the blue badge
+            img = None
+            if primary_image_small:
+                img = image_from_url_or_b64(primary_image_small)
+            elif primary_image:
+                img = image_from_url_or_b64(primary_image)
+
+            if img:
+                # resize image for display width while preserving aspect ratio
+                st.image(img, use_column_width=True, caption=f"{title} — MET object #{obj_id}", output_format="PNG")
+                # Download button: save to buffer
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                buf.seek(0)
+                st.download_button("Download", data=buf, file_name=f"met_{obj_id}.png", mime="image/png")
+            else:
+                st.markdown('<div class="no-image">No image available for this artwork.</div>', unsafe_allow_html=True)
+
+        with colB:
+            st.markdown(f'<div class="meta"><strong>Artist:</strong> {artist if artist else "Unknown"}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="meta"><strong>Year:</strong> {date if date else "Unknown"}</div>', unsafe_allow_html=True)
+            # extra metadata (medium, credit line)
+            medium = meta.get("medium")
+            credit = meta.get("creditLine")
+            if medium:
+                st.markdown(f'<div class="meta"><strong>Medium:</strong> {medium}</div>', unsafe_allow_html=True)
+            if credit:
+                st.markdown(f'<div class="meta"><strong>Credit:</strong> {credit}</div>', unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# small footer
+st.markdown("---")
+st.markdown("Data from The Metropolitan Museum of Art Collection API — https://metmuseum.github.io/")
+
